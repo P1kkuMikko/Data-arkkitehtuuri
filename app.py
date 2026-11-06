@@ -7,82 +7,135 @@ from src.database import load_game_logs
 
 st.set_page_config(page_title="Suomalaiset NHL-pelaajat", layout="wide")
 
+# Pelipaikkojen lyhenteet suomeksi
+PELIPAIKAT = {
+    "C": "Keskushyökkääjä",
+    "L": "Vasen laitahyökkääjä",
+    "R": "Oikea laitahyökkääjä",
+    "D": "Puolustaja",
+}
+
+# Sarakkeiden suomenkieliset nimet kaavioihin ja taulukkoon
+NIMET = {
+    "name": "Pelaaja",
+    "team_name": "Joukkue",
+    "position": "Pelipaikka",
+    "games": "Ottelut",
+    "toi": "Keskim. peliaika (min)",
+    "points": "Pisteet",
+    "shots": "Laukaukset",
+    "p60": "Pisteet / 60 min",
+    "age": "Ikä",
+    "bmi": "Painoindeksi",
+    "draft_pick": "Varausvalinta (kokonaisvalinta)",
+    "goal_for": "Joukkueen tekemät maalit",
+    "team_points": "Joukkueen pisteet",
+    "goal_share_pct": "Osuus joukkueen maaleista (%)",
+    "game_date": "Päivämäärä",
+    "value": "Pisteet",
+    "variable": "Mittari",
+}
+
 
 @st.cache_data
-def get_data():
-    return load_game_logs()
+def hae_data():
+    df = load_game_logs()
+    df["position_fi"] = df["position"].replace(PELIPAIKAT)
+    return df
 
 
-df = get_data()
+df = hae_data()
 
 st.title("Suomalaiset NHL-pelaajat")
 
 # Sivupalkin suodattimet
-position = st.sidebar.radio("Pelipaikka", ["Kaikki", "Hyökkääjät", "Puolustajat"])
-min_games = st.sidebar.slider("Min. otteluita", 1, int(df.groupby("player_id").size().max()), 5)
-player = st.sidebar.selectbox("Pelaaja (kuntopuntari)", sorted(df["name"].unique()))
+pelipaikka = st.sidebar.radio("Pelipaikka", ["Kaikki", "Hyökkääjät", "Puolustajat"])
+max_ottelut = int(df.groupby("player_id").size().to_numpy().max())
+min_ottelut = st.sidebar.slider("Vähimmäismäärä otteluita", 1, max_ottelut, 5)
+pelaaja = st.sidebar.selectbox("Pelaaja (kuntopuntari)", sorted(df["name"].unique()))
 
-# Kaavio 1: peliaika vs. pisteet
+# Pelipaikkasuodatus
 data = df
-if position == "Hyökkääjät":
+if pelipaikka == "Hyökkääjät":
     data = data[data["position"].isin(["C", "L", "R"])]
-elif position == "Puolustajat":
+elif pelipaikka == "Puolustajat":
     data = data[data["position"] == "D"]
 
-summary = data.groupby(["name", "team_abbrev"], as_index=False).agg(
+# Kaavio 1: peliaika vs. pisteet
+yhteenveto = data.groupby(["name", "team_name"], as_index=False).agg(
     games=("game_id", "count"),
     toi=("toi_min", "mean"),
     points=("points", "sum"),
     shots=("shots", "sum"),
     p60=("points_per_60", "mean"),
 )
-summary = summary[summary["games"] >= min_games]
+yhteenveto = yhteenveto.loc[yhteenveto["games"] >= min_ottelut]
 
-fig1 = px.scatter(
-    summary, x="toi", y="points", size="shots", color="team_abbrev", hover_name="name",
-    hover_data=["games", "p60"],
-    labels={"toi": "Keskim. peliaika (min)", "points": "Pisteet", "shots": "Laukaukset"},
+kaavio1 = px.scatter(
+    yhteenveto, x="toi", y="points", size="shots", color="team_name", hover_name="name",
+    hover_data=["games", "p60"], labels=NIMET,
     title="Peliaika vs. pisteet (pallon koko = laukaukset)",
 )
-st.plotly_chart(fig1, use_container_width=True)
+st.plotly_chart(kaavio1, width="stretch")
 
 # Kaavio 2: valitun pelaajan kuntopuntari
-player_data = df[df["name"] == player]
-fig2 = px.line(
-    player_data, x="game_date", y=["cumulative_points", "rolling_points_5"], hover_name="opponent",
-    labels={"value": "Pisteet", "game_date": "Pvm", "variable": "Mittari"},
-    title=f"{player}: pistekertymä ja 5 ottelun liukuva keskiarvo",
+pelaajan_data = df.loc[df["name"] == pelaaja]
+kaavio2 = px.line(
+    pelaajan_data, x="game_date", y=["cumulative_points", "rolling_points_5"], hover_name="opponent",
+    labels=NIMET,
+    title=f"{pelaaja}: pistekertymä ja 5 ottelun liukuva keskiarvo",
 )
-st.plotly_chart(fig2, use_container_width=True)
+# Päivämäärät suomalaiseen muotoon (päivä.kuukausi.vuosi, ei englanninkielisiä kuukausia)
+kaavio2.update_xaxes(tickformat="%d.%m.%Y", hoverformat="%d.%m.%Y")
+kaavio2.for_each_trace(
+    lambda t: t.update(
+        name={
+            "cumulative_points": "Pistekertymä",
+            "rolling_points_5": "5 ottelun liukuva keskiarvo",
+        }[t.name],
+        hovertemplate=(
+            "<b>Vastustaja: %{hovertext}</b><br>"
+            "Päivämäärä: %{x|%d.%m.%Y}<br>"
+            + (
+                "Pistekertymä: %{y}<extra></extra>"
+                if t.name == "cumulative_points"
+                else "5 ottelun liukuva keskiarvo: %{y:.2f}<extra></extra>"
+            )
+        ),
+    )
+)
+st.plotly_chart(kaavio2, width="stretch")
 
-# Kaavio 3: rikastettu data (profiili) – ikä vs. P/60
-profile_summary = data.groupby(["name", "position"], as_index=False).agg(
+# Kaavio 3: rikastettu data (profiili) – ikä vs. pisteet per 60 min
+profiili = data.groupby(["name", "position_fi"], as_index=False).agg(
     age=("age", "first"), bmi=("bmi", "first"), p60=("points_per_60", "mean"),
     draft_pick=("draft_overall_pick", "first"), games=("game_id", "count"),
 )
-profile_summary = profile_summary[profile_summary["games"] >= min_games]
-fig3 = px.scatter(
-    profile_summary, x="age", y="p60", color="position", size="bmi", hover_name="name",
-    hover_data=["draft_pick"],
-    labels={"age": "Ikä", "p60": "Pisteet / 60 min", "bmi": "BMI"},
-    title="Ikä vs. pisteet per 60 min (pallon koko = BMI)",
+profiili = profiili.loc[profiili["games"] >= min_ottelut]
+kaavio3 = px.scatter(
+    profiili, x="age", y="p60", color="position_fi", size="bmi", hover_name="name",
+    hover_data=["draft_pick"], labels={**NIMET, "position_fi": "Pelipaikka"},
+    title="Ikä vs. pisteet / 60 min (pallon koko = painoindeksi)",
 )
-st.plotly_chart(fig3, use_container_width=True)
+st.plotly_chart(kaavio3, width="stretch")
 
-# Kaavio 4: joukkuekonteksti (standings) – pelaajan osuus joukkueen maaleista
-share = data.groupby(["name", "team_abbrev"], as_index=False).agg(
+# Kaavio 4: joukkuekonteksti (sarjataulukko) – pelaajan osuus joukkueen maaleista
+osuus = data.groupby(["name", "team_name"], as_index=False).agg(
     points=("points", "sum"), goal_for=("goal_for", "first"),
     team_points=("team_points", "first"), games=("game_id", "count"),
 )
-share = share[share["games"] >= min_games]
-share["goal_share_pct"] = (share["points"] / share["goal_for"] * 100).round(1)
-fig4 = px.bar(
-    share.sort_values("goal_share_pct", ascending=False).head(15),
-    x="name", y="goal_share_pct", color="team_abbrev", hover_data=["points", "goal_for", "team_points"],
-    labels={"name": "Pelaaja", "goal_share_pct": "Osuus joukkueen maaleista (%)"},
-    title="Pelaajan pisteet suhteessa joukkueen tekemiin maaleihin (top 15)",
+osuus = osuus.loc[osuus["games"] >= min_ottelut]
+osuus["goal_share_pct"] = (osuus["points"] / osuus["goal_for"] * 100).round(1)
+kaavio4 = px.bar(
+    osuus.sort_values("goal_share_pct", ascending=False).head(15),
+    x="name", y="goal_share_pct", color="team_name", hover_data=["points", "goal_for", "team_points"],
+    labels=NIMET,
+    title="Pelaajan pisteet suhteessa joukkueen tekemiin maaleihin (15 parasta)",
 )
-st.plotly_chart(fig4, use_container_width=True)
+st.plotly_chart(kaavio4, width="stretch")
 
 with st.expander("Näytä data taulukkona"):
-    st.dataframe(summary)
+    taulukko = yhteenveto.copy()
+    taulukko["toi"] = taulukko["toi"].round(1)
+    taulukko["p60"] = taulukko["p60"].round(2)
+    st.dataframe(taulukko.rename(columns=NIMET))

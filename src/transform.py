@@ -47,9 +47,12 @@ def transform_players(raw_players):
     return pd.DataFrame(rows).drop_duplicates("player_id")
 
 
-def transform_profiles(raw_profiles):
-    """Rikastus: ikä, BMI ja draft-tiedot pelaajaprofiileista (landing-reitti)."""
-    today = pd.Timestamp.today()
+def transform_profiles(raw_profiles, today=None):
+    """Rikastus: ikä, painoindeksi (BMI) ja varaustiedot pelaajaprofiileista (landing-reitti).
+
+    today: valinnainen vertailupäivä iän laskentaan (oletuksena tämä päivä, testeissä kiinteä).
+    """
+    today = pd.Timestamp(today) if today is not None else pd.Timestamp.today()
     rows = []
     for p in raw_profiles:
         birth = pd.to_datetime(p.get("birthDate"), errors="coerce")

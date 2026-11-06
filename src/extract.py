@@ -7,7 +7,7 @@ import requests
 BASE_URL = "https://api-web.nhle.com/v1"
 
 
-def get_json(path):
+def get_json(path) -> dict:
     """Hakee yhden API-reitin ja palauttaa JSON:n."""
     for attempt in range(6):
         response = requests.get(f"{BASE_URL}/{path}", timeout=15)
@@ -16,7 +16,7 @@ def get_json(path):
             continue
         response.raise_for_status()
         return response.json()
-    response.raise_for_status()
+    raise RuntimeError(f"API palautti toistuvasti virheen 429 (liikaa pyyntöjä): {path}")
 
 
 def fetch_teams():
@@ -40,7 +40,7 @@ def fetch_finnish_players(team_abbrevs, country="FIN"):
 
 
 def fetch_player_profile(player_id):
-    """Pelaajan profiili (pituus, paino, syntymäaika, draft) toisesta API-reitistä."""
+    """Pelaajan profiili (pituus, paino, syntymäaika, varaustiedot) toisesta API-reitistä."""
     data = get_json(f"player/{player_id}/landing")
     time.sleep(1)
     return data
